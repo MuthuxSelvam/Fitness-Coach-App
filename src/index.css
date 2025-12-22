@@ -1,0 +1,102 @@
+/* Tailwind CSS Directives - Validated by PostCSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CSS Variables for Theme Colors */
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --surface: #e2e8f0;
+  --surface-rgb: 226, 232, 240;
+  --border: #cbd5e1;
+  --muted: #94a3b8;
+  --muted-foreground: #64748b;
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #f8fafc;
+  --surface: #1e293b;
+  --surface-rgb: 30, 41, 59;
+  --border: #334155;
+  --muted: #64748b;
+  --muted-foreground: #94a3b8;
+}
+
+/* Base Styles */
+body {
+  @apply bg-background text-foreground antialiased;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Card Component */
+.card {
+  background-color: rgba(var(--surface-rgb, 30, 41, 59), 0.5);
+  @apply border border-border rounded-2xl shadow-xl;
+}
+
+/* Custom Input Field */
+.input-field {
+  @apply w-full bg-background border border-border rounded-lg p-3 text-foreground focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all placeholder:text-gray-400;
+}
+
+/* Primary Button */
+.btn-primary {
+  @apply bg-primary hover:bg-primary/90 text-white px-6 py-2 rounded-full font-semibold transition-all shadow-lg shadow-primary/30 hover:shadow-primary/50 active:scale-95;
+}
+
+@media print {
+
+  /* Hide everything by default */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Restore visibility for the export container */
+  #pdf-export-container,
+  #pdf-export-container * {
+    visibility: visible;
+  }
+
+  /* Position the export container specifically for print */
+  #pdf-export-container {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 20px !important;
+    background: white !important;
+    color: black !important;
+    z-index: 99999 !important;
+    display: block !important;
+  }
+
+  /* Reset font size for print legibility */
+  #pdf-export-container h1 {
+    font-size: 24pt;
+    color: #000;
+  }
+
+  #pdf-export-container h2 {
+    font-size: 18pt;
+    color: #000;
+  }
+
+  #pdf-export-container p,
+  #pdf-export-container div {
+    font-size: 12pt;
+    color: #000;
+  }
+
+  /* Ensure page breaks work */
+  .break-before-page {
+    page-break-before: always;
+  }
+
+  .break-inside-avoid {
+    page-break-inside: avoid;
+  }
+}
