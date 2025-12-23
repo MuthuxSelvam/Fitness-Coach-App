@@ -12,97 +12,138 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Download, Play, Pause, Dumbbell, Utensils, RefreshCcw, Quote } from 'lucide-react';
+import { Download, Play, Pause, Dumbbell, Utensils, RefreshCcw, Quote, Sparkles } from 'lucide-react';
 import Loading from '../components/ui/Loading';
-import { generateFitnessPlan } from '../services/aiService';
+import ImageModal from '../components/ui/ImageModal';
+import { generateFitnessPlan, generateMotivationQuote } from '../services/aiService';
 import { exportToPDF } from '../lib/pdfUtils';
-
-// Collection of motivational quotes for user inspiration
-const MOTIVATIONAL_QUOTES = [
-    "Every workout brings you closer to your goals. Stay consistent, stay strong!",
-    "The only bad workout is the one that didn't happen.",
-    "Your body can stand almost anything. It's your mind that you have to convince.",
-    "Success isn't always about greatness. It's about consistency.",
-    "Don't limit your challenges. Challenge your limits.",
-    "Discipline is doing what needs to be done, even if you don't want to do it."
-];
+import { useCallback } from 'react';
 
 function Dashboard() {
     const location = useLocation();
-    const userData = location.state?.userData || {};
+    const navigate = useNavigate();
+
+    // Initialize userData with robust error handling and localStorage recovery
+    const [userData] = useState(() => {
+        try {
+            const navData = location.state?.userData;
+            if (navData) {
+                localStorage.setItem('fitness_user_data', JSON.stringify(navData));
+                return navData;
+            }
+            const saved = localStorage.getItem('fitness_user_data');
+            return saved ? JSON.parse(saved) : {};
+        } catch (error) {
+            console.error("Critical: Failed to recover session data:", error);
+            return {};
+        }
+    });
 
     // Core state management
     const [isLoading, setIsLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('workout');
     const [plan, setPlan] = useState(null);
+    const [refreshStatus, setRefreshStatus] = useState('idle'); // 'idle', 'loading', 'success', 'error'
 
-    // Text-to-speech state: 'idle', 'playing', or 'paused'
+    // Text-to-speech state: 'idle', 'playing_workout', 'playing_diet', 'paused'
     const [speechStatus, setSpeechStatus] = useState('idle');
 
-    // Motivation quote rotation
-    const [currentQuoteIndex, setCurrentQuoteIndex] = useState(0);
+    // Motivation quote state - persist in localStorage so it doesn't change on reload
+    const [quote, setQuote] = useState(() => {
+        return localStorage.getItem('dailyQuote') || "Your journey begins today.";
+    });
+    const [isQuoteLoading, setIsQuoteLoading] = useState(false);
+
+    // Image modal state for AI-generated images
+    const [imageModal, setImageModal] = useState({
+        isOpen: false,
+        itemName: '',
+        type: 'exercise' // 'exercise' or 'meal'
+    });
 
     /**
-     * Rotates to the next motivational quote in the list.
+     * Opens the image modal to generate an AI image for the selected item.
      */
-    function showNextQuote() {
-        setCurrentQuoteIndex((prevIndex) => (prevIndex + 1) % MOTIVATIONAL_QUOTES.length);
+    function openImageModal(itemName, type) {
+        setImageModal({ isOpen: true, itemName, type });
     }
 
     /**
-     * Handles text-to-speech functionality with play/pause/resume controls.
-     * Uses the Web Speech API to read the plan aloud.
+     * Closes the image modal.
      */
-    function handleSpeechToggle() {
-        if (!plan) return;
+    function closeImageModal() {
+        setImageModal({ isOpen: false, itemName: '', type: 'exercise' });
+    }
 
-        // If currently playing, pause the speech
-        if (speechStatus === 'playing') {
-            window.speechSynthesis.pause();
-            setSpeechStatus('paused');
+    /**
+     * Fetches a new AI-generated motivation quote.
+     */
+    const fetchNewQuote = useCallback(async () => {
+        if (!userData.name || isQuoteLoading) return;
+
+        setIsQuoteLoading(true);
+        setRefreshStatus('loading');
+
+        try {
+            const newQuote = await generateMotivationQuote(userData);
+            setQuote(newQuote);
+            localStorage.setItem('dailyQuote', newQuote);
+            setRefreshStatus('success');
+            // Reset success checkmark after 2 seconds
+            setTimeout(() => setRefreshStatus('idle'), 2000);
+        } catch (error) {
+            console.error("Failed to fetch quote", error);
+            setRefreshStatus('error');
+            setTimeout(() => setRefreshStatus('idle'), 2000);
+        } finally {
+            setIsQuoteLoading(false);
+        }
+    }, [userData, isQuoteLoading]);
+
+    /**
+     * Handles text-to-speech for specific sections.
+     * @param {string} section - 'workout' or 'diet'
+     */
+    function playSection(section) {
+        // Stop any current speech
+        window.speechSynthesis.cancel();
+
+        if (speechStatus === `playing_${section}`) {
+            setSpeechStatus('idle');
             return;
         }
 
-        // If paused, resume the speech
-        if (speechStatus === 'paused') {
-            window.speechSynthesis.resume();
-            setSpeechStatus('playing');
-            return;
-        }
+        let textToRead = "";
 
-        // Build the speech text based on the active tab
-        const introText = `Here is your personalized ${userData.goal} plan. Your daily calorie target is ${plan.summary.daily_calories} calories.`;
-
-        let planDetails = "";
-        if (activeTab === 'workout') {
-            planDetails = "For your workouts: ";
+        if (section === 'workout') {
+            textToRead = `Here is your workout plan. `;
             plan.workout_plan.forEach(day => {
-                planDetails += `On ${day.day}, focus on ${day.focus}. `;
+                textToRead += `On ${day.day}, focus on ${day.focus}. `;
+                day.exercises.forEach(ex => {
+                    textToRead += `${ex.name}, ${ex.sets} sets of ${ex.reps} reps. `;
+                });
             });
-        } else {
-            planDetails = "For your diet: ";
+        } else if (section === 'diet') {
+            textToRead = `Here is your diet plan. `;
             plan.diet_plan.forEach(meal => {
-                planDetails += `For ${meal.meal}, have ${meal.food}. `;
+                textToRead += `For ${meal.meal}, have ${meal.food}. `;
             });
         }
 
-        // Create and configure the speech utterance
-        const utterance = new SpeechSynthesisUtterance(introText + " " + planDetails);
+        const utterance = new SpeechSynthesisUtterance(textToRead);
         utterance.onend = () => setSpeechStatus('idle');
 
-        // Cancel any previous speech and start fresh
-        window.speechSynthesis.cancel();
         window.speechSynthesis.speak(utterance);
-        setSpeechStatus('playing');
+        setSpeechStatus(`playing_${section}`);
     }
 
     /**
      * Fetches the fitness plan from cache or generates a new one via AI.
      * Implements caching to reduce API calls for the same user/goal combo.
      */
-    async function loadFitnessPlan() {
+    const loadFitnessPlan = useCallback(async () => {
         // Guard clause: don't proceed without user data
         if (!userData.name) {
             setIsLoading(false);
@@ -133,24 +174,30 @@ function Dashboard() {
         } finally {
             setIsLoading(false);
         }
-    }
-
-    // Load the plan when the component mounts
-    useEffect(() => {
-        loadFitnessPlan();
     }, [userData]);
+
+    // Load the plan and initial quote when component mounts
+    useEffect(() => {
+        // Redirect to get-started if no user data is found
+        if (!userData.name) {
+            navigate('/get-started');
+            return;
+        }
+
+        loadFitnessPlan();
+
+        // Only fetch a quote if we don't have one cached yet
+        if (!localStorage.getItem('dailyQuote')) {
+            fetchNewQuote();
+        }
+    }, [userData, navigate]);
 
     // Show loading state while plan is being generated
     if (isLoading) {
         return <Loading />;
     }
 
-    // Helper to determine the speech button text
-    function getSpeechButtonText() {
-        if (speechStatus === 'playing') return 'Pause';
-        if (speechStatus === 'paused') return 'Resume';
-        return 'Listen to Plan';
-    }
+
 
     return (
         <div id="pdf-root" className="container mx-auto px-4 py-8">
@@ -249,15 +296,19 @@ function Dashboard() {
                                 <h3 className="font-semibold text-foreground">Daily Motivation</h3>
                             </div>
                             <button
-                                onClick={showNextQuote}
-                                className="p-1 hover:bg-surface/80 rounded-full transition-colors"
-                                aria-label="Show next quote"
+                                onClick={fetchNewQuote}
+                                disabled={isQuoteLoading}
+                                className={`p-1.5 rounded-full transition-all duration-300 ${refreshStatus === 'success' ? 'bg-green-100 text-green-600' :
+                                        refreshStatus === 'error' ? 'bg-red-100 text-red-600' :
+                                            'hover:bg-surface/80 text-muted-foreground'
+                                    }`}
+                                aria-label="Refresh quote"
                             >
-                                <RefreshCcw className="w-4 h-4 text-muted-foreground" />
+                                <RefreshCcw className={`w-4 h-4 ${isQuoteLoading ? 'animate-spin' : ''}`} />
                             </button>
                         </div>
                         <p className="italic text-foreground text-lg">
-                            "{MOTIVATIONAL_QUOTES[currentQuoteIndex]}"
+                            "{quote}"
                         </p>
                     </motion.div>
                 </div>
@@ -270,8 +321,8 @@ function Dashboard() {
                         <button
                             onClick={() => setActiveTab('workout')}
                             className={`flex items-center pb-3 px-2 border-b-2 transition-colors ${activeTab === 'workout'
-                                    ? 'border-primary text-primary'
-                                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                                ? 'border-primary text-primary'
+                                : 'border-transparent text-muted-foreground hover:text-foreground'
                                 }`}
                         >
                             <Dumbbell className="w-4 h-4 mr-2" /> Workout Plan
@@ -279,8 +330,8 @@ function Dashboard() {
                         <button
                             onClick={() => setActiveTab('diet')}
                             className={`flex items-center pb-3 px-2 border-b-2 transition-colors ${activeTab === 'diet'
-                                    ? 'border-secondary text-secondary'
-                                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                                ? 'border-secondary text-secondary'
+                                : 'border-transparent text-muted-foreground hover:text-foreground'
                                 }`}
                         >
                             <Utensils className="w-4 h-4 mr-2" /> Diet Plan
@@ -302,17 +353,32 @@ function Dashboard() {
                                     <p className="text-muted-foreground mb-4">
                                         Your {userData.goal} journey starts here. We've customized this {userData.fitnessLevel} plan for {userData.location} workouts.
                                     </p>
-                                    <button
-                                        onClick={handleSpeechToggle}
-                                        className="flex items-center text-sm text-primary hover:underline"
-                                    >
-                                        {speechStatus === 'playing' ? <Pause className="w-4 h-4 mr-1" /> : <Play className="w-4 h-4 mr-1" />}
-                                        {getSpeechButtonText()}
-                                    </button>
+                                    <div className="flex flex-wrap gap-4 mt-2">
+                                        <button
+                                            onClick={() => playSection('workout')}
+                                            className={`flex items-center text-sm px-3 py-1.5 rounded-full transition-colors ${speechStatus === 'playing_workout'
+                                                ? 'bg-primary text-white'
+                                                : 'bg-primary/10 text-primary hover:bg-primary/20'
+                                                }`}
+                                        >
+                                            {speechStatus === 'playing_workout' ? <Pause className="w-3 h-3 mr-2" /> : <Play className="w-3 h-3 mr-2" />}
+                                            Listen to Workout
+                                        </button>
+                                        <button
+                                            onClick={() => playSection('diet')}
+                                            className={`flex items-center text-sm px-3 py-1.5 rounded-full transition-colors ${speechStatus === 'playing_diet'
+                                                ? 'bg-secondary text-white'
+                                                : 'bg-secondary/10 text-secondary hover:bg-secondary/20'
+                                                }`}
+                                        >
+                                            {speechStatus === 'playing_diet' ? <Pause className="w-3 h-3 mr-2" /> : <Play className="w-3 h-3 mr-2" />}
+                                            Listen to Diet
+                                        </button>
+                                    </div>
                                 </div>
 
                                 {/* Workout Days List */}
-                                {plan.workout_plan.map((day, dayIndex) => (
+                                {plan?.workout_plan?.map((day, dayIndex) => (
                                     <div
                                         key={dayIndex}
                                         className="p-4 rounded-lg bg-surface border border-border hover:border-primary/50 transition-colors cursor-pointer group"
@@ -323,11 +389,18 @@ function Dashboard() {
                                                 {day.focus}
                                             </span>
                                         </div>
-                                        <ul className="space-y-1 ml-4 text-muted-foreground list-disc">
+                                        <ul className="space-y-2 ml-4 text-muted-foreground">
                                             {day.exercises.map((exercise, exerciseIndex) => (
-                                                <li key={exerciseIndex} className="group-hover:text-foreground transition-colors">
-                                                    <span className="font-medium">{exercise.name}</span> - {exercise.sets}x{exercise.reps}
-                                                    <p className="text-xs italic opacity-70">{exercise.tips}</p>
+                                                <li
+                                                    key={exerciseIndex}
+                                                    className="group-hover:text-foreground transition-colors p-2 rounded-lg hover:bg-primary/10 cursor-pointer flex items-center justify-between"
+                                                    onClick={() => openImageModal(exercise.name, 'exercise')}
+                                                >
+                                                    <div>
+                                                        <span className="font-medium">{exercise.name}</span> - {exercise.sets}x{exercise.reps}
+                                                        <p className="text-xs italic opacity-70">{exercise.tips}</p>
+                                                    </div>
+                                                    <Sparkles className="w-4 h-4 text-primary opacity-0 group-hover:opacity-100 transition-opacity" title="Click for AI image" />
                                                 </li>
                                             ))}
                                         </ul>
@@ -351,10 +424,11 @@ function Dashboard() {
                                 </div>
 
                                 {/* Meals List */}
-                                {plan.diet_plan.map((meal, mealIndex) => (
+                                {plan?.diet_plan?.map((meal, mealIndex) => (
                                     <div
                                         key={mealIndex}
-                                        className="p-4 rounded-lg bg-surface border border-border flex flex-col md:flex-row md:items-center justify-between hover:border-secondary/50 transition-colors cursor-pointer"
+                                        className="p-4 rounded-lg bg-surface border border-border flex flex-col md:flex-row md:items-center justify-between hover:border-secondary/50 transition-colors cursor-pointer group"
+                                        onClick={() => openImageModal(meal.food, 'meal')}
                                     >
                                         <div className="flex-1">
                                             <div className="flex items-center space-x-2 mb-1">
@@ -364,6 +438,7 @@ function Dashboard() {
                                                 <span className="text-xs font-mono text-secondary">
                                                     P: {meal.protein} | C: {meal.carbs} | F: {meal.fats}
                                                 </span>
+                                                <Sparkles className="w-3 h-3 text-secondary opacity-0 group-hover:opacity-100 transition-opacity" title="Click for AI image" />
                                             </div>
                                             <h4 className="font-medium text-lg">{meal.food}</h4>
                                         </div>
@@ -471,6 +546,15 @@ function Dashboard() {
                     </div>
                 </div>
             )}
+
+            {/* Image Modal for AI-generated visualizations */}
+            <ImageModal
+                isOpen={imageModal.isOpen}
+                onClose={closeImageModal}
+                itemName={imageModal.itemName}
+                type={imageModal.type}
+                userGender={userData.gender}
+            />
         </div>
     );
 }

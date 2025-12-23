@@ -13,14 +13,53 @@ import OpenAI from "openai";
 // Initialize the OpenAI client with OpenRouter configuration
 // We use OpenRouter as a proxy to access various AI models including Gemini
 const openai = new OpenAI({
-    baseURL: "https://openrouter.ai/api/v1",
-    apiKey: import.meta.env.VITE_OPENROUTER_API_KEY,
-    dangerouslyAllowBrowser: true, // Note: In production, API calls should go through a backend
-    defaultHeaders: {
-        "HTTP-Referer": import.meta.env.VITE_SITE_URL,
-        "X-Title": import.meta.env.VITE_SITE_NAME,
-    },
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: import.meta.env.VITE_OPENROUTER_API_KEY,
+  dangerouslyAllowBrowser: true, // Note: In production, API calls should go through a backend
+  defaultHeaders: {
+    "HTTP-Referer": import.meta.env.VITE_SITE_URL,
+    "X-Title": import.meta.env.VITE_SITE_NAME,
+  },
 });
+
+/**
+ * Generates a personalized daily motivation quote based on the user's goal.
+ * 
+ * @param {Object} userData - User profile data (name, goal, fitnessLevel)
+ * @returns {Promise<string>} A short, inspiring quote
+ */
+export async function generateMotivationQuote(userData) {
+  const { name, goal, fitnessLevel } = userData;
+
+  const systemPrompt = `
+    You are an inspiring fitness coach. Generate a short, powerful, 1-sentence daily motivational quote for ${name}.
+    Context:
+    - Goal: ${goal}
+    - Level: ${fitnessLevel}
+    
+    CRITICAL: Output ONLY the quote text. No quotation marks, no "Author:", no tags.
+    `;
+
+  try {
+    console.log("Generating motivation quote for:", name, goal);
+    const response = await openai.chat.completions.create({
+      model: "google/gemini-2.0-flash-exp:free",
+      messages: [{ role: "user", content: systemPrompt }],
+    });
+
+    const quote = response.choices[0].message.content.trim();
+    console.log("AI Quote generated successfully:", quote);
+    return quote;
+  } catch (error) {
+    console.error("AI Service Error (Motivation Quote):", error);
+    // Explicitly check for rate limits or key issues
+    if (error.status === 402 || error.status === 429) {
+      console.warn("Rate limited or balance exhausted. Using local fallback.");
+    }
+    // Fallback if AI fails
+    return "Consistency is the key to progress. Keep showing up!";
+  }
+}
 
 /**
  * Generates a personalized 7-day fitness and diet plan based on user data.
@@ -43,22 +82,22 @@ const openai = new OpenAI({
  * @throws {Error} If the API call fails or returns invalid data
  */
 export async function generateFitnessPlan(userData) {
-    // Destructure user data for easier access
-    const {
-        name,
-        age,
-        gender,
-        weight,
-        height,
-        goal,
-        fitnessLevel,
-        location,
-        dietPreference
-    } = userData;
+  // Destructure user data for easier access
+  const {
+    name,
+    age,
+    gender,
+    weight,
+    height,
+    goal,
+    fitnessLevel,
+    location,
+    dietPreference
+  } = userData;
 
-    // Build the prompt that tells the AI exactly what we need
-    // We're being very specific about the output format to ensure consistent results
-    const systemPrompt = `
+  // Build the prompt that tells the AI exactly what we need
+  // We're being very specific about the output format to ensure consistent results
+  const systemPrompt = `
     You are an expert fitness coach and nutritionist. 
     Generate a 7-day Workout and Diet plan for ${name}:
     - Profile: ${age} years old, ${gender}, ${weight}kg, ${height}cm.
@@ -98,30 +137,30 @@ export async function generateFitnessPlan(userData) {
     }
   `;
 
-    try {
-        // Make the API request to generate the plan
-        const response = await openai.chat.completions.create({
-            model: "google/gemini-2.0-flash-exp:free",
-            messages: [{ role: "user", content: systemPrompt }],
-            response_format: { type: "json_object" },
-        });
+  try {
+    // Make the API request to generate the plan
+    const response = await openai.chat.completions.create({
+      model: "google/gemini-2.0-flash-exp:free",
+      messages: [{ role: "user", content: systemPrompt }],
+      response_format: { type: "json_object" },
+    });
 
-        // Extract the content from the response
-        const content = response.choices[0].message.content;
+    // Extract the content from the response
+    const content = response.choices[0].message.content;
 
-        // Validate that we got a response
-        if (!content) {
-            throw new Error("The AI returned an empty response. Please try again.");
-        }
-
-        // Parse and return the JSON response
-        return JSON.parse(content);
-
-    } catch (error) {
-        // Log the error for debugging purposes
-        console.error("Failed to generate fitness plan:", error);
-
-        // Re-throw with a more user-friendly message
-        throw new Error("Unable to generate your fitness plan. Please check your connection and try again.");
+    // Validate that we got a response
+    if (!content) {
+      throw new Error("The AI returned an empty response. Please try again.");
     }
+
+    // Parse and return the JSON response
+    return JSON.parse(content);
+
+  } catch (error) {
+    // Log the error for debugging purposes
+    console.error("Failed to generate fitness plan:", error);
+
+    // Re-throw with a more user-friendly message
+    throw new Error("Unable to generate your fitness plan. Please check your connection and try again.");
+  }
 }
