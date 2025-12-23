@@ -154,11 +154,20 @@ function Dashboard() {
         const cacheKey = `plan_${userData.name}_${userData.goal}`;
         const cachedPlan = localStorage.getItem(cacheKey);
 
-        // If we have a cached plan, use it
+        // If we have a VALID cached plan (with workout_plan array), use it
         if (cachedPlan) {
-            setPlan(JSON.parse(cachedPlan));
-            setIsLoading(false);
-            return;
+            try {
+                const parsed = JSON.parse(cachedPlan);
+                if (parsed?.workout_plan?.length > 0) {
+                    setPlan(parsed);
+                    setIsLoading(false);
+                    return;
+                }
+                // Invalid cache, remove it
+                localStorage.removeItem(cacheKey);
+            } catch (e) {
+                localStorage.removeItem(cacheKey);
+            }
         }
 
         // Otherwise, generate a new plan from the AI
@@ -299,8 +308,8 @@ function Dashboard() {
                                 onClick={fetchNewQuote}
                                 disabled={isQuoteLoading}
                                 className={`p-1.5 rounded-full transition-all duration-300 ${refreshStatus === 'success' ? 'bg-green-100 text-green-600' :
-                                        refreshStatus === 'error' ? 'bg-red-100 text-red-600' :
-                                            'hover:bg-surface/80 text-muted-foreground'
+                                    refreshStatus === 'error' ? 'bg-red-100 text-red-600' :
+                                        'hover:bg-surface/80 text-muted-foreground'
                                     }`}
                                 aria-label="Refresh quote"
                             >

@@ -23,6 +23,30 @@ const openai = new OpenAI({
 });
 
 /**
+ * Helper function to retry async operations with exponential backoff.
+ * @param {Function} operation - The async function to retry
+ * @param {number} retries - Number of retry attempts (default 3)
+ * @param {number} delay - Initial delay in ms (default 1000)
+ */
+async function retryWithBackoff(operation, retries = 3, delay = 1000) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (retries <= 0) throw error;
+
+    // Check if error is retryable (network, 5xx, or specific 429)
+    const isRetryable = !error.status || error.status >= 500 || error.status === 429;
+
+    if (!isRetryable) throw error;
+
+    console.log(`API call failed. Retrying in ${delay}ms... (${retries} attempts left)`);
+    await new Promise(resolve => setTimeout(resolve, delay));
+
+    return retryWithBackoff(operation, retries - 1, delay * 2);
+  }
+}
+
+/**
  * Generates a personalized daily motivation quote based on the user's goal.
  * 
  * @param {Object} userData - User profile data (name, goal, fitnessLevel)
@@ -41,15 +65,16 @@ export async function generateMotivationQuote(userData) {
     `;
 
   try {
-    console.log("Generating motivation quote for:", name, goal);
-    const response = await openai.chat.completions.create({
-      model: "google/gemini-2.0-flash-exp:free",
-      messages: [{ role: "user", content: systemPrompt }],
-    });
-
-    const quote = response.choices[0].message.content.trim();
-    console.log("AI Quote generated successfully:", quote);
-    return quote;
+    return await retryWithBackoff(async () => {
+      console.log("Generating motivation quote for:", name, goal);
+      const response = await openai.chat.completions.create({
+        model: "google/gemini-2.0-flash-exp:free",
+        messages: [{ role: "user", content: systemPrompt }],
+      });
+      const quote = response.choices[0].message.content.trim();
+      console.log("AI Quote generated successfully:", quote);
+      return quote;
+    }, 2, 1000); // Retry twice
   } catch (error) {
     console.error("AI Service Error (Motivation Quote):", error);
     // Explicitly check for rate limits or key issues
@@ -105,7 +130,7 @@ export async function generateFitnessPlan(userData) {
     - Goal: ${goal}
     - Workout Location: ${location}
     - Dietary Preference: ${dietPreference}
-
+ 
     IMPORTANT: Return ONLY valid JSON. Do not add markdown or text outside the JSON.
     The response must follow this exact structure:
     {
@@ -138,12 +163,15 @@ export async function generateFitnessPlan(userData) {
   `;
 
   try {
-    // Make the API request to generate the plan
-    const response = await openai.chat.completions.create({
-      model: "google/gemini-2.0-flash-exp:free",
-      messages: [{ role: "user", content: systemPrompt }],
-      response_format: { type: "json_object" },
-    });
+    // Make the API request to generate the plan with retry mechanism
+    // Using 2 retries with 1s base delay for faster response
+    const response = await retryWithBackoff(async () => {
+      return await openai.chat.completions.create({
+        model: "google/gemini-2.0-flash-exp:free",
+        messages: [{ role: "user", content: systemPrompt }],
+        response_format: { type: "json_object" },
+      });
+    }, 2, 1000); // Retry 2 times, start with 1s delay
 
     // Extract the content from the response
     const content = response.choices[0].message.content;
@@ -160,7 +188,110 @@ export async function generateFitnessPlan(userData) {
     // Log the error for debugging purposes
     console.error("Failed to generate fitness plan:", error);
 
+
     // Re-throw with a more user-friendly message
-    throw new Error("Unable to generate your fitness plan. Please check your connection and try again.");
+    // Instead of throwing, we now return a FALLBACK plan to ensure the UI is never empty.
+    console.warn("Generating fallback plan due to API failure.");
+
+    // Fallback data structure mirroring the AI response
+    return {
+      "workout_plan": [
+        {
+          "day": "Monday",
+          "focus": "Full Body Power",
+          "exercises": [
+            { "name": "Barbell Squats", "sets": "4", "reps": "8-10", "tips": "Keep chest up and core tight" },
+            { "name": "Bench Press", "sets": "3", "reps": "10", "tips": "Control the descent" },
+            { "name": "Bent Over Rows", "sets": "3", "reps": "12", "tips": "Squeeze shoulder blades" },
+            { "name": "Plank", "sets": "3", "reps": "60s", "tips": "Maintain straight line" }
+          ]
+        },
+        {
+          "day": "Tuesday",
+          "focus": "Active Recovery",
+          "exercises": [
+            { "name": "Light Jogging", "sets": "1", "reps": "20 mins", "tips": "Keep comfortable pace" },
+            { "name": "Stretching Routine", "sets": "1", "reps": "15 mins", "tips": "Focus on tight areas" }
+          ]
+        },
+        {
+          "day": "Wednesday",
+          "focus": "Upper Body Strength",
+          "exercises": [
+            { "name": "Overhead Press", "sets": "3", "reps": "10", "tips": "Don't arch back" },
+            { "name": "Pull Ups", "sets": "3", "reps": "Max", "tips": "Full range of motion" },
+            { "name": "Dumbbell Curls", "sets": "3", "reps": "12", "tips": "Isolate biceps" }
+          ]
+        },
+        {
+          "day": "Thursday",
+          "focus": "Rest Day",
+          "exercises": [
+            { "name": "Walking", "sets": "1", "reps": "30 mins", "tips": "Leisurely pace" }
+          ]
+        },
+        {
+          "day": "Friday",
+          "focus": "Lower Body & Core",
+          "exercises": [
+            { "name": "Romanian Deadlifts", "sets": "3", "reps": "10", "tips": "Hinge at hips" },
+            { "name": "Lunges", "sets": "3", "reps": "12/leg", "tips": "Knee shouldn't pass toe" },
+            { "name": "Leg Raises", "sets": "3", "reps": "15", "tips": "Control movement" }
+          ]
+        },
+        {
+          "day": "Saturday",
+          "focus": "Cardio & HIIT",
+          "exercises": [
+            { "name": "Burpees", "sets": "3", "reps": "10", "tips": "Explosive movement" },
+            { "name": "Mountain Climbers", "sets": "3", "reps": "30s", "tips": "Keep hips low" },
+            { "name": "Jump Rope", "sets": "3", "reps": "2 mins", "tips": "Stay on toes" }
+          ]
+        },
+        {
+          "day": "Sunday",
+          "focus": "Rest & Prep",
+          "exercises": [{ "name": "Yoga", "sets": "1", "reps": "20 mins", "tips": "Relax and breathe" }]
+        }
+      ],
+      "diet_plan": [
+        {
+          "meal": "Breakfast",
+          "food": "Oatmeal with Berries & Protein Shake",
+          "calories": 450,
+          "protein": "30g",
+          "carbs": "50g",
+          "fats": "10g"
+        },
+        {
+          "meal": "Lunch",
+          "food": "Grilled Chicken Salad with Quinoa",
+          "calories": 600,
+          "protein": "45g",
+          "carbs": "40g",
+          "fats": "20g"
+        },
+        {
+          "meal": "Snack",
+          "food": "Greek Yogurt & Almonds",
+          "calories": 250,
+          "protein": "15g",
+          "carbs": "10g",
+          "fats": "15g"
+        },
+        {
+          "meal": "Dinner",
+          "food": "Baked Salmon with Steamed Broccoli",
+          "calories": 500,
+          "protein": "40g",
+          "carbs": "10g",
+          "fats": "25g"
+        }
+      ],
+      "summary": {
+        "daily_calories": 2200,
+        "macros": { "protein": "160g", "carbs": "200g", "fats": "80g" }
+      }
+    };
   }
 }
